@@ -58,7 +58,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
     // MediaPipe Tasks Vision
-    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+    implementation("com.google.mediapipe:tasks-vision:0.20230731")
 
     // CameraX cho camera preview
     val cameraxVersion = "1.3.1"

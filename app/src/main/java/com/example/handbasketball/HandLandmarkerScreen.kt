@@ -355,7 +355,7 @@ fun HandInfoCard(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
-                handLandmarkerResult.handedness().forEachIndexed { index, handedness ->
+                handLandmarkerResult.handednesses().forEachIndexed { index, handedness ->
                     val categoryName = handedness[0].categoryName()
                     val score = handedness[0].score()
 
