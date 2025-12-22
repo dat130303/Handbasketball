@@ -44,7 +44,7 @@ class HandLandmarkerHelper(
     private val minHandDetectionConfidence: Float = 0.5f,
     private val minHandTrackingConfidence: Float = 0.5f,
     private val minHandPresenceConfidence: Float = 0.5f,
-    private val maxNumHands: Int = 2,
+    private val maxNumHands: Int = 1,
     private val onResults: (HandLandmarkerResult, MPImage) -> Unit,
     private val onError: (String) -> Unit
 ) {
