@@ -12,6 +12,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
@@ -73,9 +75,9 @@ private const val BACKBOARD_H = 0.13f
 private const val BACKBOARD_Z = 1.0f
 private const val ARC_BASE = 0.85f
 private const val ARC_BY_DIST = 0.85f
-private const val HAND_BALL_GRAB_RADIUS = 0.10f
+private const val HAND_BALL_GRAB_RADIUS = 0.12f
 private const val SCORE_RADIUS_FACTOR = 0.80f
-private const val POWER_SPEED = 2.5f
+private const val POWER_SPEED = 1.8f
 
 // ⭐ CHO PHÉP MẤT TAY TỐI ĐA BAO NHIÊU FRAME (30 frame = 0.5 giây)
 private const val MAX_NO_HAND_FRAMES = 30
@@ -151,6 +153,13 @@ private fun isPalmGesture(landmarks: List<NormalizedLandmark>): Boolean {
     return fingerTips.zip(fingerBases).all { (tip, base) ->
         landmarks[tip].y() < landmarks[base].y()
     }
+}
+
+private fun projectToScreen(x: Float, y: Float, z: Float, w: Float, h: Float): Offset {
+    val depth = z.coerceIn(0f, 1f)
+    val py = y - depth * 0.15f
+    val px = x
+    return Offset(w * px, h * py)
 }
 
 /** =========================
@@ -580,8 +589,6 @@ fun Basketball3DView(
 ) {
     val ballBitmap = ImageBitmap.imageResource(id = R.drawable.ball)
     Box(modifier = modifier) {
-        // ===== HÌNH ẢNH RỔ + BẢNG =====
-        // Tính toán vị trí và kích thước dựa trên depth
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val w = maxWidth.value
             val h = maxHeight.value
@@ -596,10 +603,9 @@ fun Basketball3DView(
             val hoopImageWidth = (BACKBOARD_W * w * boardScale * 1.5f).dp
             val hoopImageHeight = (BACKBOARD_H * h * boardScale * 2.0f).dp
 
-            // Hiển thị hình rổ + bảng
             androidx.compose.foundation.Image(
                 painter = androidx.compose.ui.res.painterResource(
-                    id = R.drawable.basket_loop  // ⭐ Thay bằng tên file hình của bạn
+                    id = R.drawable.basket_loop  // Thay bằng tên file hình của bạn
                 ),
                 contentDescription = "Basketball Hoop",
                 modifier = Modifier
@@ -613,7 +619,7 @@ fun Basketball3DView(
             )
         }
 
-        // ===== CANVAS CHO BÓNG + TRAIL + AIM GUIDE =====
+        // Vẽ đường cong hình trái chuối từ bóng đến rổ
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -621,93 +627,20 @@ fun Basketball3DView(
             val bx = w * state.basketPosition.x
             val by = h * state.basketPosition.y
 
-            // ================= AIM GUIDE (CỐ ĐỊNH + CONG XUỐNG KHI LỆCH TRÁI/PHẢI) =================
+            // Vẽ đường cong từ bóng đến rổ
             if (state.isCharging && state.ball.attachedToHand) {
-
                 val handX = state.ball.x
                 val handY = state.ball.y
 
-                val basketX = state.basketPosition.x
-                val basketY = state.basketPosition.y
-
-                // ===== POWER GIẢ CỐ ĐỊNH (KHÔNG THEO POWER BAR) =====
-                val guidePower = 0.9f
-
-                // ===== VECTOR NÉM =====
-                val dx = basketX - handX
-                val dy = basketY - handY
-                val dist = sqrt(dx * dx + dy * dy).coerceIn(0.05f, 1.2f)
-
-                val ax = dx
-                val ay = dy
-
-                // ===== ARC & VẬN TỐC CỐ ĐỊNH =====
-                val arc = (ARC_BASE + ARC_BY_DIST * dist) * guidePower
-                val vx = ax * (2.0f + 1.2f * guidePower)
-                val vy = -arc
-                val vz = (1.4f + 1.6f * guidePower) + dist * 0.8f
-
-                // ====================================================
-                // ⭐ CONG XUỐNG THEO ĐỘ LỆCH NGANG (TRÁI / PHẢI)
-                // ====================================================
-                val sideOffset = abs(dx)                // lệch ngang
-                val sideCurveFactor =
-                    (sideOffset / 0.5f).coerceIn(0f, 1f)  // chuẩn hóa 0..1
-
-                // gravity giả cho aim guide (chỉ để vẽ)
-                val guideGravity =
-                    GRAVITY_Y * (1f + 0.35f * sideCurveFactor)
-                // lệch nhiều → rơi nhanh hơn → cong xuống
-
-                // ===== VẼ PARABOL =====
-                val numPoints = 30
-                var prevPoint: Offset? = null
-
-                for (i in 0..numPoints) {
-                    val t = i / numPoints.toFloat()
-                    val simTime = t * 1.2f
-
-                    val simX = handX + vx * simTime
-                    val simY = handY + vy * simTime +
-                            guideGravity * simTime * simTime * 0.5f
-                    val simZ = vz * simTime
-
-                    if (simY > GROUND_Y || simZ > 1.2f) break
-
-                    val p = projectToScreen(simX, simY, simZ, w, h)
-
-                    if (prevPoint != null) {
-                        val alpha = (0.6f * (1f - t * 0.5f)).coerceIn(0.25f, 0.6f)
-                        drawLine(
-                            color = Color.White.copy(alpha = alpha),
-                            start = prevPoint,
-                            end = p,
-                            strokeWidth = 3f
-                        )
-                    }
-
-                    prevPoint = p
-                }
-
-                // ===== VÙNG SCORE (GIỮ NGUYÊN) =====
-                val rimScreenY = by - RIM_Z * h * 0.075f
-                val rimPos = Offset(bx, rimScreenY)
-                val scoreRadiusPx = (RIM_RADIUS * SCORE_RADIUS_FACTOR) * w
-
-                drawCircle(
-                    color = Color(0xFF2196F3).copy(alpha = 0.35f),
-                    radius = scoreRadiusPx,
-                    center = rimPos
-                )
-                drawCircle(
-                    color = Color(0xFF2196F3).copy(alpha = 0.85f),
-                    radius = scoreRadiusPx,
-                    center = rimPos,
-                    style = Stroke(width = 3f)
+                // Gọi hàm vẽ đường cong từ tâm bóng đến tâm rổ
+                drawBananaCurve(
+                    start = Offset(handX * w, handY * h), // Tọa độ bóng
+                    end = Offset(bx, by),  // Tọa độ rổ
+                    canvas = this
                 )
             }
 
-            // Trail
+            // Vẽ trail bóng
             for (t in trail) {
                 val p = projectToScreen(t.x, t.y, t.z, w, h)
                 val alpha = (0.55f * t.life).coerceIn(0f, 0.55f)
@@ -721,14 +654,12 @@ fun Basketball3DView(
                 )
             }
 
-            // ===== BALL IMAGE – CANVAS SYNC 100% =====
+            // Vẽ bóng
             val b = state.ball
             val bp = projectToScreen(b.x, b.y, b.z, w, h)
 
-            // ===== LOGIC SCALE CŨ (GIỮ NGUYÊN) =====
             val zNorm = b.z.coerceIn(0f, 1f)
-            var ballScale =
-                (2.8f * (1f - zNorm).pow(0.4f) + 1.5f)
+            var ballScale = (2.8f * (1f - zNorm).pow(0.4f) + 1.5f)
 
             if (b.enteringHoop) {
                 ballScale *= 0.85f
@@ -737,18 +668,15 @@ fun Basketball3DView(
             val ballRadius = 50f * ballScale
             val depthAlpha = (1f - b.z * 0.25f).coerceIn(0.80f, 1f)
 
-            // ===== VẼ ẢNH BÓNG =====
             drawImage(
                 image = ballBitmap,
 
-                // lấy toàn bộ ảnh gốc
                 srcOffset = IntOffset.Zero,
                 srcSize = IntSize(
                     ballBitmap.width,
                     ballBitmap.height
                 ),
 
-                // vẽ ra màn hình theo physics
                 dstOffset = IntOffset(
                     (bp.x - ballRadius).toInt(),
                     (bp.y - ballRadius).toInt()
@@ -765,9 +693,34 @@ fun Basketball3DView(
     }
 }
 
-private fun projectToScreen(x: Float, y: Float, z: Float, w: Float, h: Float): Offset {
-    val depth = z.coerceIn(0f, 1f)
-    val py = y - depth * 0.15f
-    val px = x
-    return Offset(w * px, h * py)
+// Hàm để vẽ đường cong hình trái chuối từ bóng đến rổ
+fun drawBananaCurve(
+    start: Offset,
+    end: Offset,
+    canvas: DrawScope
+) {
+    // Tính toán điểm kiểm soát (control points)
+    // Điểm kiểm soát cao hơn để tạo độ cong
+    val controlPoint1 = Offset(
+        x = start.x + (end.x - start.x) * 0.3f,
+        y = start.y - 1000f // Tạo độ cong lên trên
+    )
+    val controlPoint2 = Offset(
+        x = start.x + (end.x - start.x) * 0.75f,
+        y = end.y - 500f // Tạo độ cong xuống dưới
+    )
+
+    // Tạo đường cong Bézier Cubic (3 điểm kiểm soát)
+    val path = androidx.compose.ui.graphics.Path().apply {
+        moveTo(start.x, start.y)  // Điểm bắt đầu (tâm bóng)
+        cubicTo(
+            controlPoint1.x, controlPoint1.y,  // Điểm kiểm soát 1
+            controlPoint2.x, controlPoint2.y,  // Điểm kiểm soát 2
+            end.x, end.y                     // Điểm kết thúc (tâm rổ)
+        )
+    }
+
+    // Vẽ đường cong với nét đứt
+    val pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f)) // Mảng [10f, 10f] xác định độ dài các đoạn đứt và đoạn trống
+    canvas.drawPath(path, color = Color.Red, style = Stroke(width = 15f, pathEffect = pathEffect))
 }
