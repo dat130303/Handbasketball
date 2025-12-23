@@ -9,7 +9,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
@@ -38,10 +43,11 @@ data class GameState(
     val score: Int = 0,
     val attempts: Int = 0,
     val powerLevel: Float = 0f,
+    val powerDir: Float = 1f,   // ⭐ +1 lên, -1 xuống
     val isCharging: Boolean = false,
     val basketPosition: Offset = Offset(0.5f, 0.34f),
     val openHandFrames: Int = 0,
-    val hasOpenedHandFirst: Boolean = false  // ⭐ ĐÃ MỞ TAY TRƯỚC ĐÓ CHƯA
+    val hasOpenedHandFirst: Boolean = false
 )
 
 /** =========================
@@ -68,6 +74,7 @@ private const val ARC_BY_DIST = 0.85f
 private const val HAND_BALL_GRAB_RADIUS = 0.10f
 private const val SCORE_RADIUS_FACTOR = 0.80f   // ⬅️ RẤT QUAN TRỌNG
 private const val AIM_ASSIST = 0.30f             // ⬅️ TAY LỆCH VẪN VÀO
+private const val POWER_SPEED = 3.5f // 1.2 = ~0.8s full bar
 /** =========================
  *  UTILS
  *  ========================= */
@@ -365,7 +372,7 @@ fun processHandGesture(
     val s = gameState.value
 
     // ===================== NHẬN DIỆN NGÓN =====================
-    val thumbOpen  = distance(lms[4], lms[2]) > 0.12f
+    val thumbOpen  = distance(lms[4], lms[2]) > 0.14f
     val indexOpen  = isFingerReallyExtended(lms[8],  lms[6],  lms[5])
     val middleOpen = isFingerReallyExtended(lms[12], lms[10], lms[9])
     val ringOpen   = isFingerReallyExtended(lms[16], lms[14], lms[13])
@@ -418,10 +425,21 @@ fun processHandGesture(
 
 
     if (canCharge) {
+        val dt = FPS_DT
+
+        var newPower = s.powerLevel + POWER_SPEED * dt * s.powerDir
+        var newDir = s.powerDir
+
+        if (newPower >= 1f) {
+            newPower = 1f
+            newDir = -1f
+        } else if (newPower <= 0f) {
+            newPower = 0f
+            newDir = 1f
+        }
+
         val handX = lms[9].x()
         val fixedY = 0.75f
-
-        val newPower = (s.powerLevel + 0.02f).coerceAtMost(1f)
 
         val nb = s.ball.apply {
             x = handX.coerceIn(0.15f, 0.85f)
@@ -435,13 +453,14 @@ fun processHandGesture(
         }
 
         if (!s.isCharging) {
-            Log.i(TAG_GESTURE, "⭐ CHARGE_START ✅ (fist+straight) power=${"%.2f".format(newPower)}")
+            Log.i(TAG_GESTURE, "⭐ CHARGE_START (PING-PONG)")
         }
 
         gameState.value = s.copy(
             ball = nb,
             isCharging = true,
             powerLevel = newPower,
+            powerDir = newDir,
             openHandFrames = 0
         )
         return
@@ -514,8 +533,9 @@ fun processHandGesture(
             ball = nb,
             isCharging = false,
             powerLevel = 0f,
+            powerDir = 1f,   // ⭐ reset lại hướng
             openHandFrames = 0,
-            hasOpenedHandFirst = false,  // ⭐ Reset sau khi ném
+            hasOpenedHandFirst = false,
             attempts = s.attempts + 1
         )
     }
@@ -556,6 +576,7 @@ fun Basketball3DView(
     trail: List<BallSample>,
     modifier: Modifier = Modifier
 ) {
+    val ballBitmap = ImageBitmap.imageResource(id = R.drawable.ball)
     Box(modifier = modifier) {
         // ===== HÌNH ẢNH RỔ + BẢNG =====
         // Tính toán vị trí và kích thước dựa trên depth
@@ -692,64 +713,46 @@ fun Basketball3DView(
                 )
             }
 
-            // Ball
+            // ===== BALL IMAGE – CANVAS SYNC 100% =====
             val b = state.ball
             val bp = projectToScreen(b.x, b.y, b.z, w, h)
 
-            // Shadow
-            val shadowP = Offset(w * b.x, h * GROUND_Y)
-            val shadowAlpha = (0.30f * (1f - b.z * 0.9f)).coerceIn(0.05f, 0.30f)
-            val shadowRadius = (30f * (1f - b.z * 0.7f)).coerceIn(10f, 30f)
-
-            drawCircle(
-                color = Color.Black.copy(alpha = shadowAlpha),
-                radius = shadowRadius,
-                center = shadowP
-            )
-
+// ===== LOGIC SCALE CŨ (GIỮ NGUYÊN) =====
             val zNorm = b.z.coerceIn(0f, 1f)
-
             var ballScale =
-                (2.8f * (1f - zNorm).pow(1.15f) + 0.9f)
+                (2.8f * (1f - zNorm).pow(0.4f) + 1.5f)
 
             if (b.enteringHoop) {
                 ballScale *= 0.85f
             }
 
-            val ballRadius = 30f * ballScale
-            val depthAlpha = (1f - b.z * 0.25f).coerceIn(0.70f, 1f)
+            val ballRadius = 50f * ballScale
+            val depthAlpha = (1f - b.z * 0.25f).coerceIn(0.80f, 1f)
 
-            if (b.justThrown) {
-                drawCircle(
-                    color = Color(0xFFFFFFFF).copy(alpha = 0.18f),
-                    radius = ballRadius * 1.7f,
-                    center = bp
-                )
-            }
 
-            drawCircle(
-                color = Color(0xFFFF8C00).copy(alpha = depthAlpha),
-                radius = ballRadius,
-                center = bp
-            )
+// ===== VẼ ẢNH BÓNG =====
+            drawImage(
+                image = ballBitmap,
 
-            drawCircle(
-                color = Color(0xFFD2691E).copy(alpha = depthAlpha),
-                radius = ballRadius,
-                center = bp,
-                style = Stroke(width = 2f)
-            )
-            drawLine(
-                color = Color(0xFFD2691E).copy(alpha = depthAlpha),
-                start = Offset(bp.x - ballRadius, bp.y),
-                end = Offset(bp.x + ballRadius, bp.y),
-                strokeWidth = 2f
-            )
-            drawLine(
-                color = Color(0xFFD2691E).copy(alpha = depthAlpha),
-                start = Offset(bp.x, bp.y - ballRadius),
-                end = Offset(bp.x, bp.y + ballRadius),
-                strokeWidth = 2f
+                // lấy toàn bộ ảnh gốc
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(
+                    ballBitmap.width,
+                    ballBitmap.height
+                ),
+
+                // vẽ ra màn hình theo physics
+                dstOffset = IntOffset(
+                    (bp.x - ballRadius).toInt(),
+                    (bp.y - ballRadius).toInt()
+                ),
+                dstSize = IntSize(
+                    (ballRadius * 2).toInt(),
+                    (ballRadius * 2).toInt()
+                ),
+
+                alpha = depthAlpha,
+                filterQuality = FilterQuality.High
             )
         }
     }
