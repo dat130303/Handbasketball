@@ -101,7 +101,7 @@ fun InstructionsCard(modifier: Modifier = Modifier) {
         Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("🎮 HOW TO PLAY", color = Color.White, style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("✊ Nắm tay lại để tích lực", color = Color(0xFF4CAF50), style = MaterialTheme.typography.bodyMedium)
+            Text("✊ Nắm tay ở chỗ quả bóng để tích lực", color = Color(0xFF4CAF50), style = MaterialTheme.typography.bodyMedium)
             Text("✋ Mở cả bàn tay để ném", color = Color(0xFFFF9800), style = MaterialTheme.typography.bodyMedium)
             Text("🎯 Di chuyển tay để nhắm", color = Color(0xFF2196F3), style = MaterialTheme.typography.bodyMedium)
         }

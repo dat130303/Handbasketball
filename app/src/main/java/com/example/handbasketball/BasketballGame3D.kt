@@ -1,5 +1,6 @@
 package com.example.handbasketball
 
+import android.os.Build
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
@@ -47,7 +48,8 @@ data class GameState(
     val isCharging: Boolean = false,
     val basketPosition: Offset = Offset(0.5f, 0.34f),
     val openHandFrames: Int = 0,
-    val hasOpenedHandFirst: Boolean = false
+    val hasOpenedHandFirst: Boolean = false,
+    val noHandFrames: Int = 0    // ⭐ ĐẾM SỐ FRAME KHÔNG THẤY TAY
 )
 
 /** =========================
@@ -72,20 +74,15 @@ private const val BACKBOARD_Z = 1.0f
 private const val ARC_BASE = 0.85f
 private const val ARC_BY_DIST = 0.85f
 private const val HAND_BALL_GRAB_RADIUS = 0.10f
-private const val SCORE_RADIUS_FACTOR = 0.80f   // ⬅️ RẤT QUAN TRỌNG
-private const val AIM_ASSIST = 0.30f             // ⬅️ TAY LỆCH VẪN VÀO
-private const val POWER_SPEED = 3.5f // 1.2 = ~0.8s full bar
+private const val SCORE_RADIUS_FACTOR = 0.80f
+private const val POWER_SPEED = 2.5f
+
+// ⭐ CHO PHÉP MẤT TAY TỐI ĐA BAO NHIÊU FRAME (30 frame = 0.5 giây)
+private const val MAX_NO_HAND_FRAMES = 30
+
 /** =========================
  *  UTILS
  *  ========================= */
-fun isFingerReallyExtended(
-    tip: NormalizedLandmark,
-    pip: NormalizedLandmark,
-    mcp: NormalizedLandmark
-): Boolean {
-    return tip.y() < pip.y() && pip.y() < mcp.y()
-}
-
 fun isPalmFacingCamera(lms: List<NormalizedLandmark>): Boolean {
     val wrist = lms[0]
     val middleMcp = lms[9]
@@ -97,12 +94,6 @@ fun isPalmFacingCamera(lms: List<NormalizedLandmark>): Boolean {
     return verticalDiff < 0.05f
 }
 
-fun distance(a: NormalizedLandmark, b: NormalizedLandmark): Float {
-    val dx = a.x() - b.x()
-    val dy = a.y() - b.y()
-    return sqrt(dx * dx + dy * dy)
-}
-
 fun isHandOverBall(
     handLm: NormalizedLandmark,
     ball: Ball
@@ -111,6 +102,55 @@ fun isHandOverBall(
     val dy = handLm.y() - ball.y
     val dist = sqrt(dx * dx + dy * dy)
     return dist < HAND_BALL_GRAB_RADIUS
+}
+
+private val isOppoDevice = Build.MANUFACTURER.equals("OPPO", ignoreCase = true) ||
+        Build.BRAND.equals("OPPO", ignoreCase = true)
+
+private fun isFistGesture(landmarks: List<NormalizedLandmark>): Boolean {
+    fun dist(a: Int, b: Int): Float {
+        val dx = landmarks[a].x() - landmarks[b].x()
+        val dy = landmarks[a].y() - landmarks[b].y()
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    fun distToPointNorm(i: Int, px: Float, py: Float): Float {
+        val dx = landmarks[i].x() - px
+        val dy = landmarks[i].y() - py
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    val palmSize = dist(0, 9).coerceAtLeast(1e-4f)
+    val palmCx = (landmarks[0].x() + landmarks[9].x()) * 0.5f
+    val palmCy = (landmarks[0].y() + landmarks[9].y()) * 0.5f
+
+    // Nới lỏng threshold cho OPPO
+    val fistThreshold = if (isOppoDevice) 0.80f else 0.75f
+    val palmThreshold = if (isOppoDevice) 1.15f else 1.10f
+
+    val fingersOk = listOf(
+        8 to 5, 12 to 9, 16 to 13, 20 to 17
+    ).all { (tip, mcp) ->
+        val tipToMcp = dist(tip, mcp)
+        val tipToPalm = distToPointNorm(tip, palmCx, palmCy)
+        tipToMcp < fistThreshold * palmSize && tipToPalm < palmThreshold * palmSize
+    }
+
+    val thumbTip = 4
+    val thumbToPalm = distToPointNorm(thumbTip, palmCx, palmCy)
+    val thumbToIndexMcp = dist(thumbTip, 5)
+    val thumbOk = (thumbToPalm < 1.20f * palmSize) || (thumbToIndexMcp < 1.00f * palmSize)
+
+    return fingersOk && thumbOk
+}
+
+private fun isPalmGesture(landmarks: List<NormalizedLandmark>): Boolean {
+    val fingerTips = listOf(8, 12, 16, 20)
+    val fingerBases = listOf(5, 9, 13, 17)
+
+    return fingerTips.zip(fingerBases).all { (tip, base) ->
+        landmarks[tip].y() < landmarks[base].y()
+    }
 }
 
 /** =========================
@@ -359,70 +399,74 @@ fun processHandGesture(
     // ===================== KHÔNG CÓ TAY =====================
     if (result.landmarks().isEmpty()) {
         val s0 = gameState.value
+        val newNoHandFrames = s0.noHandFrames + 1
 
-        // Reset khi không có tay và không đang bay
-        if (!s0.isCharging && !s0.ball.isFlying) {
-            gameState.value = s0.copy(openHandFrames = 0)
+        // Nếu đang charge → tiếp tục tăng power trong thời gian ngắn
+        if (s0.isCharging && newNoHandFrames <= MAX_NO_HAND_FRAMES) {
+            val dt = FPS_DT
+
+            var newPower = s0.powerLevel + POWER_SPEED * dt * s0.powerDir
+            var newDir = s0.powerDir
+
+            if (newPower >= 1f) {
+                newPower = 1f
+                newDir = -1f
+            } else if (newPower <= 0f) {
+                newPower = 0f
+                newDir = 1f
+            }
+
+            gameState.value = s0.copy(
+                powerLevel = newPower,
+                powerDir = newDir,
+                noHandFrames = newNoHandFrames
+            )
+            return
         }
 
+        // Mất tay quá lâu → reset
+        if (newNoHandFrames > MAX_NO_HAND_FRAMES && s0.isCharging) {
+            gameState.value = s0.copy(
+                isCharging = false,
+                powerLevel = 0f,
+                powerDir = 1f,
+                openHandFrames = 0,
+                noHandFrames = 0
+            )
+        } else if (!s0.isCharging && !s0.ball.isFlying) {
+            gameState.value = s0.copy(
+                openHandFrames = 0,
+                noHandFrames = newNoHandFrames
+            )
+        }
         return
     }
 
+    // ===================== CÓ TAY =====================
     val lms = result.landmarks()[0]
-    val s = gameState.value
+    val s = gameState.value.copy(noHandFrames = 0)
 
-    // ===================== NHẬN DIỆN NGÓN =====================
-    val thumbOpen  = distance(lms[4], lms[2]) > 0.14f
-    val indexOpen  = isFingerReallyExtended(lms[8],  lms[6],  lms[5])
-    val middleOpen = isFingerReallyExtended(lms[12], lms[10], lms[9])
-    val ringOpen   = isFingerReallyExtended(lms[16], lms[14], lms[13])
-    val pinkyOpen  = isFingerReallyExtended(lms[20], lms[18], lms[17])
-
+    // ⭐ GESTURE CHUẨN
+    val isFist = isFistGesture(lms)
+    val isPalm = isPalmGesture(lms)
     val palmFacingCamera = isPalmFacingCamera(lms)
 
-    // ===================== ĐẾM NGÓN MỞ =====================
-    val openFingerCount = listOf(
-        thumbOpen, indexOpen, middleOpen, ringOpen, pinkyOpen
-    ).count { it }
-
-    // ===================== TRẠNG THÁI TAY =====================
-    // ⭐ NẮM TAY: tất cả ngón đều không mở
-    val isFistClosed =
-        !thumbOpen && !indexOpen && !middleOpen && !ringOpen && !pinkyOpen
-
-    // ⭐ MỞ TAY ĐẦY ĐỦ: CẢ 5 NGÓN ĐỀU MỞ + SONG SONG MÀN HÌNH
-    val isFullHandOpen =
-        thumbOpen && indexOpen && middleOpen && ringOpen && pinkyOpen && palmFacingCamera
-
-    // ⭐ MỞ TAY ĐỂ NÉM: ít nhất 3 ngón mở
-    val isHandOpenForThrow =
-        openFingerCount >= 3 && (indexOpen || middleOpen)
-
-    // ===================== LOG =====================
     Log.d(
         TAG_GESTURE,
-        buildString {
-            append("DETECT | ")
-            append("fist=$isFistClosed, open=$isHandOpenForThrow ")
-            append("(thumb=$thumbOpen, idx=$indexOpen, mid=$middleOpen, ring=$ringOpen, pinky=$pinkyOpen) ")
-            append("| palmStraight=$palmFacingCamera ")
-            append("| isCharging=${s.isCharging} power=${"%.2f".format(s.powerLevel)} ")
-            append("| openFrames=${s.openHandFrames}")
-        }
+        "GESTURE | fist=$isFist palm=$isPalm | charging=${s.isCharging} openFrames=${s.openHandFrames}"
     )
 
     // =========================================================
-    // ============ CHARGE: NẮM TAY + SONG SONG ===============
+    // ===================== CHARGE ============================
     // =========================================================
     val handCenter = lms[9] // middle MCP
     val isHandOnBall = isHandOverBall(handCenter, s.ball)
 
     val canCharge =
-        isFistClosed &&             // nắm tay
-                palmFacingCamera &&         // song song camera
-                !s.ball.isFlying &&         // bóng chưa bay
-                isHandOnBall                // ⭐ PHẢI CHẠM BÓNG
-
+        isFist &&
+                palmFacingCamera &&
+                !s.ball.isFlying &&
+                (s.isCharging || isHandOnBall)
 
     if (canCharge) {
         val dt = FPS_DT
@@ -452,48 +496,41 @@ fun processHandGesture(
             isFlying = false
         }
 
-        if (!s.isCharging) {
-            Log.i(TAG_GESTURE, "⭐ CHARGE_START (PING-PONG)")
-        }
-
         gameState.value = s.copy(
             ball = nb,
             isCharging = true,
             powerLevel = newPower,
             powerDir = newDir,
-            openHandFrames = 0
+            openHandFrames = 0,
+            noHandFrames = 0
         )
         return
-    } else {
-        // Log lý do không charge
-        if (!s.ball.isFlying && !s.isCharging) {
-            Log.v(
-                TAG_GESTURE,
-                "CHARGE_BLOCK ❌ | fist=$isFistClosed, straight=$palmFacingCamera"
-            )
-        }
     }
 
     // =========================================================
-    // =============== ĐẾM FRAME MỞ TAY ========================
+    // ================= ĐẾM FRAME MỞ TAY ======================
     // =========================================================
-    val newOpenFrames = if (isHandOpenForThrow) s.openHandFrames + 1 else 0
+    val newOpenFrames = if (isPalm) s.openHandFrames + 1 else 0
 
-    gameState.value = s.copy(openHandFrames = newOpenFrames)
+    gameState.value = s.copy(
+        openHandFrames = newOpenFrames,
+        noHandFrames = 0
+    )
 
     // =========================================================
-    // ============= THROW: MỞ TAY SAU KHI CHARGE ==============
+    // ====================== THROW ============================
     // =========================================================
     val canThrow =
         s.isCharging &&
                 !s.ball.isFlying &&
-                (newOpenFrames >= 4 || isHandOpenForThrow)
+                isPalm &&
+                newOpenFrames >= 6   // ~0.1s giữ tay mở
 
     if (canThrow) {
         val power = s.powerLevel.coerceIn(0.15f, 1f)
 
-        val handX = lms[9].x()
-        val handY = lms[9].y()
+        val handX = s.ball.x
+        val handY = s.ball.y
 
         val bx = s.basketPosition.x
         val by = s.basketPosition.y
@@ -502,20 +539,11 @@ fun processHandGesture(
         val dy = by - handY
         val dist = sqrt(dx * dx + dy * dy).coerceIn(0.05f, 1.2f)
 
-        val ax = dx * (1f + AIM_ASSIST)
-        val ay = dy * (1f + AIM_ASSIST)
-
         val arc = (ARC_BASE + ARC_BY_DIST * dist) * power
 
-        val vx = ax * (2.0f + 1.2f * power)
+        val vx = dx * (2.0f + 1.2f * power)
         val vy = -arc
         val vz = (1.4f + 1.6f * power) + dist * 0.8f
-
-        Log.w(
-            TAG_GESTURE,
-            "🚀 THROW ✅ power=${"%.2f".format(power)} " +
-                    "vel(vx=${"%.2f".format(vx)}, vy=${"%.2f".format(vy)}, vz=${"%.2f".format(vz)})"
-        )
 
         val nb = Ball(
             x = s.ball.x,
@@ -533,43 +561,17 @@ fun processHandGesture(
             ball = nb,
             isCharging = false,
             powerLevel = 0f,
-            powerDir = 1f,   // ⭐ reset lại hướng
+            powerDir = 1f,
             openHandFrames = 0,
-            hasOpenedHandFirst = false,
             attempts = s.attempts + 1
         )
-    }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDashedLine(
-    color: Color,
-    start: Offset,
-    end: Offset,
-    dashLength: Float,
-    gapLength: Float,
-    strokeWidth: Float
-) {
-    val totalLength = (end - start).getDistance()
-    val direction = (end - start) / totalLength
-
-    var currentDistance = 0f
-    while (currentDistance < totalLength) {
-        val dashStart = start + direction * currentDistance
-        val dashEnd = start + direction * min(currentDistance + dashLength, totalLength)
-
-        drawLine(
-            color = color,
-            start = dashStart,
-            end = dashEnd,
-            strokeWidth = strokeWidth
-        )
-        currentDistance += dashLength + gapLength
     }
 }
 
 /** =========================
  *  RENDER (pseudo-3D)
  *  ========================= */
+
 @Composable
 fun Basketball3DView(
     state: GameState,
@@ -619,9 +621,8 @@ fun Basketball3DView(
             val bx = w * state.basketPosition.x
             val by = h * state.basketPosition.y
 
-            // Aim guide - PARABOL THỰC TẾ
+            // ================= AIM GUIDE (CỐ ĐỊNH + CONG XUỐNG KHI LỆCH TRÁI/PHẢI) =================
             if (state.isCharging && state.ball.attachedToHand) {
-                val power = state.powerLevel.coerceIn(0.15f, 1f)
 
                 val handX = state.ball.x
                 val handY = state.ball.y
@@ -629,74 +630,81 @@ fun Basketball3DView(
                 val basketX = state.basketPosition.x
                 val basketY = state.basketPosition.y
 
-                // Tính toán vận tốc giống như khi ném thật
+                // ===== POWER GIẢ CỐ ĐỊNH (KHÔNG THEO POWER BAR) =====
+                val guidePower = 0.9f
+
+                // ===== VECTOR NÉM =====
                 val dx = basketX - handX
                 val dy = basketY - handY
                 val dist = sqrt(dx * dx + dy * dy).coerceIn(0.05f, 1.2f)
 
-                val ax = dx * (1f + AIM_ASSIST)
-                val ay = dy * (1f + AIM_ASSIST)
-                val arc = (ARC_BASE + ARC_BY_DIST * dist) * power
+                val ax = dx
+                val ay = dy
 
-                val vx = ax * (2.0f + 1.2f * power)
+                // ===== ARC & VẬN TỐC CỐ ĐỊNH =====
+                val arc = (ARC_BASE + ARC_BY_DIST * dist) * guidePower
+                val vx = ax * (2.0f + 1.2f * guidePower)
                 val vy = -arc
-                val vz = (1.4f + 1.6f * power) + dist * 0.8f
+                val vz = (1.4f + 1.6f * guidePower) + dist * 0.8f
 
-                // Vẽ đường parabol
+                // ====================================================
+                // ⭐ CONG XUỐNG THEO ĐỘ LỆCH NGANG (TRÁI / PHẢI)
+                // ====================================================
+                val sideOffset = abs(dx)                // lệch ngang
+                val sideCurveFactor =
+                    (sideOffset / 0.5f).coerceIn(0f, 1f)  // chuẩn hóa 0..1
+
+                // gravity giả cho aim guide (chỉ để vẽ)
+                val guideGravity =
+                    GRAVITY_Y * (1f + 0.35f * sideCurveFactor)
+                // lệch nhiều → rơi nhanh hơn → cong xuống
+
+                // ===== VẼ PARABOL =====
                 val numPoints = 30
                 var prevPoint: Offset? = null
 
                 for (i in 0..numPoints) {
                     val t = i / numPoints.toFloat()
-                    val simTime = t * 1.2f // thời gian mô phỏng
+                    val simTime = t * 1.2f
 
-                    // Tính vị trí theo physics thật
                     val simX = handX + vx * simTime
-                    val simY = handY + vy * simTime + GRAVITY_Y * simTime * simTime * 0.5f
+                    val simY = handY + vy * simTime +
+                            guideGravity * simTime * simTime * 0.5f
                     val simZ = vz * simTime
 
-                    // Dừng vẽ nếu chạm sàn hoặc quá xa
                     if (simY > GROUND_Y || simZ > 1.2f) break
 
-                    val point = projectToScreen(simX, simY, simZ, w, h)
+                    val p = projectToScreen(simX, simY, simZ, w, h)
 
                     if (prevPoint != null) {
-                        // Độ mờ dần theo độ xa
-                        val alpha = (0.6f * (1f - t * 0.5f)).coerceIn(0.2f, 0.6f)
-
+                        val alpha = (0.6f * (1f - t * 0.5f)).coerceIn(0.25f, 0.6f)
                         drawLine(
                             color = Color.White.copy(alpha = alpha),
                             start = prevPoint,
-                            end = point,
+                            end = p,
                             strokeWidth = 3f
                         )
                     }
 
-                    prevPoint = point
+                    prevPoint = p
                 }
 
-                // ===== VÙNG TÂM RỔ (SCORE ZONE) =====
+                // ===== VÙNG SCORE (GIỮ NGUYÊN) =====
                 val rimScreenY = by - RIM_Z * h * 0.075f
                 val rimPos = Offset(bx, rimScreenY)
-
-// bán kính SCORE = RIM_RADIUS * 0.65f (chuẩn physics)
                 val scoreRadiusPx = (RIM_RADIUS * SCORE_RADIUS_FACTOR) * w
 
-// Vùng score (xanh dương)
                 drawCircle(
-                    color = Color(0xFF2196F3).copy(alpha = 0.35f), // xanh dương
+                    color = Color(0xFF2196F3).copy(alpha = 0.35f),
                     radius = scoreRadiusPx,
                     center = rimPos
                 )
-
-// Viền vùng score
                 drawCircle(
                     color = Color(0xFF2196F3).copy(alpha = 0.85f),
                     radius = scoreRadiusPx,
                     center = rimPos,
                     style = Stroke(width = 3f)
                 )
-
             }
 
             // Trail
@@ -717,7 +725,7 @@ fun Basketball3DView(
             val b = state.ball
             val bp = projectToScreen(b.x, b.y, b.z, w, h)
 
-// ===== LOGIC SCALE CŨ (GIỮ NGUYÊN) =====
+            // ===== LOGIC SCALE CŨ (GIỮ NGUYÊN) =====
             val zNorm = b.z.coerceIn(0f, 1f)
             var ballScale =
                 (2.8f * (1f - zNorm).pow(0.4f) + 1.5f)
@@ -729,8 +737,7 @@ fun Basketball3DView(
             val ballRadius = 50f * ballScale
             val depthAlpha = (1f - b.z * 0.25f).coerceIn(0.80f, 1f)
 
-
-// ===== VẼ ẢNH BÓNG =====
+            // ===== VẼ ẢNH BÓNG =====
             drawImage(
                 image = ballBitmap,
 
@@ -757,6 +764,7 @@ fun Basketball3DView(
         }
     }
 }
+
 private fun projectToScreen(x: Float, y: Float, z: Float, w: Float, h: Float): Offset {
     val depth = z.coerceIn(0f, 1f)
     val py = y - depth * 0.15f
