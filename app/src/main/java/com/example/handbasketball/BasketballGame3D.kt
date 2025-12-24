@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
+import kotlinx.coroutines.delay
 import kotlin.math.*
 
 /** =========================
@@ -180,33 +181,37 @@ fun BasketballGame3D(modifier: Modifier = Modifier) {
     val trail = remember { mutableStateListOf<BallSample>() }
 
     LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(16)
+        while (!gameState.value.gameOver) {
+            withFrameMillis {
+                val frameTime = it / 1000f
+                if (frameTime > 1f / 30f) {  // Giảm tốc độ cập nhật vật lý nếu cần
+                    val s = gameState.value
+                    val b = s.ball
 
-            val s = gameState.value
-            val b = s.ball
+                    if (b.shotFinished) {
+                        gameState.value = s.copy(
+                            ball = Ball(
+                                x = 0.5f,
+                                y = 0.75f,
+                                z = 0f
+                            )
+                        )
+                        trail.clear()
+                        return@withFrameMillis
+                    }
 
-            if (b.shotFinished) {
-                gameState.value = s.copy(
-                    ball = Ball(
-                        x = 0.5f,
-                        y = 0.75f,
-                        z = 0f
+                    if (!b.isFlying) {
+                        fadeTrail(trail)
+                        return@withFrameMillis
+                    }
+
+                    stepPhysics(
+                        state = gameState,
+                        trail = trail
                     )
-                )
-                trail.clear()
-                continue
+                }
             }
-
-            if (!b.isFlying) {
-                fadeTrail(trail)
-                continue
-            }
-
-            stepPhysics(
-                state = gameState,
-                trail = trail
-            )
+            delay(30)  // Tương đương với 30 FPS
         }
     }
 
@@ -273,8 +278,10 @@ data class BallSample(
 )
 
 private fun pushTrail(trail: MutableList<BallSample>, ball: Ball) {
-    if (trail.size > 28) trail.removeAt(0)
-    trail.add(BallSample(ball.x, ball.y, ball.z, 1f))
+    if (ball.isFlying) {
+        if (trail.size > 20) trail.removeAt(0) // Giới hạn số lượng trail bóng là 10
+        trail.add(BallSample(ball.x, ball.y, ball.z, 1f))
+    }
 }
 
 private fun fadeTrail(trail: MutableList<BallSample>) {

@@ -33,9 +33,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            BasketballGame3D(
-                modifier = Modifier.fillMaxSize()
-            )
+            BasketballGame3D(modifier = Modifier.fillMaxSize())
         }
     }
 }
