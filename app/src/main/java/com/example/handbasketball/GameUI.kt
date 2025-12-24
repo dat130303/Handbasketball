@@ -1,7 +1,9 @@
 package com.example.handbasketball
 
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -66,28 +70,48 @@ fun GameUI(gameState: GameState, modifier: Modifier = Modifier) {
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f))
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(32.dp)
+        Column(
+            modifier = Modifier.wrapContentSize().padding(12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("SCORE", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text("${gameState.score}", color = Color(0xFF4CAF50), style = MaterialTheme.typography.headlineLarge)
+            Row(
+                modifier = Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text("Player 1 Score: ${gameState.scorePlayer1}", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.weight(1f))
+                Text("Player 2 Score: ${gameState.scorePlayer2}", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Log.d("GameUI", "Player 1 Score: ${gameState.scorePlayer1}, Player 2 Score: ${gameState.scorePlayer2}, ${gameState.isPlayer1Turn}")
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("ATTEMPTS", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text("${gameState.attempts}", color = Color.White, style = MaterialTheme.typography.headlineLarge)
+
+            Row(
+                modifier = Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text("P1 Round: ${gameState.attemptsPlayer1}/5", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.weight(1f))
+                Text("P2 Round: ${gameState.attemptsPlayer2}/5", color = Color.White, style = MaterialTheme.typography.titleMedium)
             }
-            if (gameState.attempts > 0) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ACCURACY", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        "${(gameState.score.toFloat() / gameState.attempts * 100).toInt()}%",
-                        color = Color(0xFFFFD700),
-                        style = MaterialTheme.typography.headlineMedium
-                    )
+
+            // Hiển thị lượt chơi
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (gameState.isPlayer1Turn) {
+                    Text("Player 1's Turn", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                } else {
+                    Text("Player 2's Turn", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
             }
+
+            // Hiển thị kết quả nếu trò chơi kết thúc
+            if (gameState.gameOver) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Game Over! ${gameState.winner} Wins", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+
         }
     }
 }

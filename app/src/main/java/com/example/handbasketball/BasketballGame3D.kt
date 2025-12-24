@@ -38,20 +38,26 @@ data class Ball(
     var justThrown: Boolean = false,
     var shotFinished: Boolean = false,
     var attachedToHand: Boolean = false,
-    var enteringHoop: Boolean = false
+    var enteringHoop: Boolean = false,
+    var thrownByPlayer1: Boolean = true  // ⭐ THÊM DÒNG NÀY
 )
 
 data class GameState(
     val ball: Ball = Ball(),
-    val score: Int = 0,
-    val attempts: Int = 0,
+    val scorePlayer1: Int = 0,
+    val scorePlayer2: Int = 0,
+    val attemptsPlayer1: Int = 0,
+    val attemptsPlayer2: Int = 0,
     val powerLevel: Float = 0f,
     val powerDir: Float = 1f,   // ⭐ +1 lên, -1 xuống
     val isCharging: Boolean = false,
     val basketPosition: Offset = Offset(0.5f, 0.34f),
     val openHandFrames: Int = 0,
     val hasOpenedHandFirst: Boolean = false,
-    val noHandFrames: Int = 0    // ⭐ ĐẾM SỐ FRAME KHÔNG THẤY TAY
+    val noHandFrames: Int = 0,    // ⭐ ĐẾM SỐ FRAME KHÔNG THẤY TAY
+    val isPlayer1Turn: Boolean = true,  // Thêm cờ để theo dõi lượt của người chơi
+    val gameOver: Boolean = false, // Trạng thái kết thúc trò chơi
+    val winner: String = "", // Thông báo người thắng
 )
 
 /** =========================
@@ -367,29 +373,47 @@ private fun stepPhysics(
         }
     }
 
-    // Scoring
-    val scoreWindow = (b.z in (RIM_Z - 0.06f)..(RIM_Z + 0.10f))
-    // Scoring – CHẠM VÙNG XANH LÀ VÀO
-    if (
-        dist < (RIM_RADIUS * SCORE_RADIUS_FACTOR) &&
-        !b.enteringHoop
-    ) {
-        state.value = s.copy(
-            score = s.score + 1,
-            ball = Ball(
-                x = b.x,
-                y = b.y,
-                z = b.z,
-                enteringHoop = true
+    // Scoring – Chạm vùng xanh là vào
+    if (dist < (RIM_RADIUS * SCORE_RADIUS_FACTOR) && !b.enteringHoop) {
+        Log.d("BasketballGame", "Ball entered the score zone!")
+        Log.d("BasketballGame", "Thrown by Player 1: ${b.thrownByPlayer1}")  // ⭐ ĐỔI LOG
+
+        // Cập nhật điểm dựa vào người đã ném bóng
+        if (b.thrownByPlayer1) {  // ⭐ KIỂM TRA NGƯỜI NÉM, KHÔNG PHẢI isPlayer1Turn
+            Log.d("BasketballGame", "Player 1 scored a point!")
+            state.value = s.copy(
+                scorePlayer1 = s.scorePlayer1 + 1,
+                ball = Ball(
+                    x = b.x,
+                    y = b.y,
+                    z = b.z,
+                    enteringHoop = true,
+                    thrownByPlayer1 = b.thrownByPlayer1  // ⭐ GIỮ NGUYÊN THÔNG TIN
+                )
             )
-        )
+        } else {
+            Log.d("BasketballGame", "Player 2 scored a point!")
+            state.value = s.copy(
+                scorePlayer2 = s.scorePlayer2 + 1,
+                ball = Ball(
+                    x = b.x,
+                    y = b.y,
+                    z = b.z,
+                    enteringHoop = true,
+                    thrownByPlayer1 = b.thrownByPlayer1  // ⭐ GIỮ NGUYÊN THÔNG TIN
+                )
+            )
+        }
+
+        Log.d("BasketballGame", "Updated Score -> Player 1: ${state.value.scorePlayer1}, Player 2: ${state.value.scorePlayer2}")
 
         val nb = state.value.ball
         nb.isFlying = true
         nb.enteringHoop = true
         nb.vx = b.vx * 0.25f
-        nb.vy = abs(b.vy) * 0.4f   // luôn rơi xuống cho đẹp
+        nb.vy = abs(b.vy) * 0.4f
         nb.vz = b.vz * 0.3f
+
         return
     }
 
@@ -563,17 +587,64 @@ fun processHandGesture(
             vz = vz,
             isFlying = true,
             justThrown = true,
-            attachedToHand = false
+            attachedToHand = false,
+            thrownByPlayer1 = s.isPlayer1Turn  // ⭐ LƯU LẠI NGƯỜI NÉM
         )
 
-        gameState.value = s.copy(
-            ball = nb,
-            isCharging = false,
-            powerLevel = 0f,
-            powerDir = 1f,
-            openHandFrames = 0,
-            attempts = s.attempts + 1
-        )
+        // Cập nhật điểm và kiểm tra kết quả
+        if (s.isPlayer1Turn) {
+            if (s.attemptsPlayer1 + 1 >= 5) {
+                // Player 1 đã ném đủ 5 quả, kiểm tra kết quả
+                val winner = if (s.scorePlayer1 > s.scorePlayer2) "Player 1" else if (s.scorePlayer1 < s.scorePlayer2) "Player 2" else "Draw"
+                gameState.value = s.copy(
+                    ball = nb,
+                    isCharging = false,
+                    powerLevel = 0f,
+                    powerDir = 1f,
+                    openHandFrames = 0,
+                    attemptsPlayer1 = s.attemptsPlayer1 + 1,
+                    isPlayer1Turn = false,
+                    gameOver = true,
+                    winner = winner
+                )
+            } else {
+                gameState.value = s.copy(
+                    ball = nb,
+                    isCharging = false,
+                    powerLevel = 0f,
+                    powerDir = 1f,
+                    openHandFrames = 0,
+                    attemptsPlayer1 = s.attemptsPlayer1 + 1,
+                    isPlayer1Turn = false // Chuyển lượt cho người chơi 2
+                )
+            }
+        } else {
+            if (s.attemptsPlayer2 + 1 >= 5) {
+                // Player 2 đã ném đủ 5 quả, kiểm tra kết quả
+                val winner = if (s.scorePlayer2 > s.scorePlayer1) "Player 2" else if (s.scorePlayer2 < s.scorePlayer1) "Player 1" else "Draw"
+                gameState.value = s.copy(
+                    ball = nb,
+                    isCharging = false,
+                    powerLevel = 0f,
+                    powerDir = 1f,
+                    openHandFrames = 0,
+                    attemptsPlayer2 = s.attemptsPlayer2 + 1,
+                    isPlayer1Turn = true,
+                    gameOver = true,
+                    winner = winner
+                )
+            } else {
+                gameState.value = s.copy(
+                    ball = nb,
+                    isCharging = false,
+                    powerLevel = 0f,
+                    powerDir = 1f,
+                    openHandFrames = 0,
+                    attemptsPlayer2 = s.attemptsPlayer2 + 1,
+                    isPlayer1Turn = true // Quay lại lượt chơi của người chơi 1
+                )
+            }
+        }
     }
 }
 
