@@ -636,7 +636,25 @@ fun Basketball3DView(
                 drawBananaCurve(
                     start = Offset(handX * w, handY * h), // Tọa độ bóng
                     end = Offset(bx, by),  // Tọa độ rổ
-                    canvas = this
+                    canvas = this,
+                    screenWidth = w // Truyền chiều rộng màn hình
+                )
+
+                // ===== VÙNG SCORE (GIỮ NGUYÊN) =====
+                val rimScreenY = by - RIM_Z * h * 0.075f
+                val rimPos = Offset(bx, rimScreenY)
+                val scoreRadiusPx = (RIM_RADIUS * SCORE_RADIUS_FACTOR) * w
+
+                drawCircle(
+                    color = Color(0xFF2196F3).copy(alpha = 0.35f),
+                    radius = scoreRadiusPx,
+                    center = rimPos
+                )
+                drawCircle(
+                    color = Color(0xFF2196F3).copy(alpha = 0.85f),
+                    radius = scoreRadiusPx,
+                    center = rimPos,
+                    style = Stroke(width = 3f)
                 )
             }
 
@@ -697,17 +715,21 @@ fun Basketball3DView(
 fun drawBananaCurve(
     start: Offset,
     end: Offset,
-    canvas: DrawScope
+    canvas: DrawScope,
+    screenWidth: Float
 ) {
+    // Tính toán sự lệch của điểm cuối (tâm rổ)
+    val offsetX = (start.x - screenWidth / 2) * 0.1f // Lệch 10% chiều rộng màn hình
+    val adjustedEnd = Offset(end.x + offsetX, end.y)  // Dịch chuyển điểm cuối (tâm rổ)
+
     // Tính toán điểm kiểm soát (control points)
-    // Điểm kiểm soát cao hơn để tạo độ cong
     val controlPoint1 = Offset(
-        x = start.x + (end.x - start.x) * 0.3f,
+        x = start.x + (adjustedEnd.x - start.x) * 0.3f,
         y = start.y - 1000f // Tạo độ cong lên trên
     )
     val controlPoint2 = Offset(
-        x = start.x + (end.x - start.x) * 0.75f,
-        y = end.y - 500f // Tạo độ cong xuống dưới
+        x = start.x + (adjustedEnd.x - start.x) * 0.55f,
+        y = adjustedEnd.y - 500f // Tạo độ cong xuống dưới
     )
 
     // Tạo đường cong Bézier Cubic (3 điểm kiểm soát)
@@ -716,7 +738,7 @@ fun drawBananaCurve(
         cubicTo(
             controlPoint1.x, controlPoint1.y,  // Điểm kiểm soát 1
             controlPoint2.x, controlPoint2.y,  // Điểm kiểm soát 2
-            end.x, end.y                     // Điểm kết thúc (tâm rổ)
+            adjustedEnd.x, adjustedEnd.y      // Điểm kết thúc (tâm rổ đã lệch)
         )
     }
 

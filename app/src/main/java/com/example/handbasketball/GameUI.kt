@@ -61,36 +61,22 @@ fun PowerBar(power: Float, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun GameUI(gameState: GameState, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f))
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(32.dp)
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("SCORE", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text("${gameState.score}", color = Color(0xFF4CAF50), style = MaterialTheme.typography.headlineLarge)
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("ATTEMPTS", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text("${gameState.attempts}", color = Color.White, style = MaterialTheme.typography.headlineLarge)
-            }
-            if (gameState.attempts > 0) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ACCURACY", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        "${(gameState.score.toFloat() / gameState.attempts * 100).toInt()}%",
-                        color = Color(0xFFFFD700),
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                }
-            }
+fun GameUI(
+    gameState: GameState,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(text = "Player 1: ${gameState.scorePlayer1} points (Attempts: ${gameState.attemptsPlayer1}/5)", style = MaterialTheme.typography.bodyLarge)
+        Text(text = "Player 2: ${gameState.scorePlayer2} points (Attempts: ${gameState.attemptsPlayer2}/5)", style = MaterialTheme.typography.bodyLarge)
+
+        if (gameState.turn == 1) {
+            Text(text = "Player 1's Turn", style = MaterialTheme.typography.bodyLarge)
+        } else {
+            Text(text = "Player 2's Turn", style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
+
 
 @Composable
 fun InstructionsCard(modifier: Modifier = Modifier) {
